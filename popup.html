@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>iPaaS Helper</title>
+    <style>
+      :root {
+        /* iPaaS design tokens (fall back to the real brand values when the
+           page vars are not present, since the popup is its own document). */
+        --ih-primary: #045b8f;
+        --ih-primary-2: #12a2f7;
+        --ih-text: #58595b;
+        --ih-border: #e8e9eb;
+        --ih-surface: #ffffff;
+        --ih-muted: #afb0b3;
+        --ih-success: #1ab83f;
+        --ih-error: #c0392b;
+        color-scheme: light;
+      }
+      body {
+        min-width: 320px;
+        margin: 0;
+        font-family: Inter, "Open Sans", system-ui, sans-serif;
+        font-size: 13px;
+        line-height: 1.45;
+        color: var(--ih-text);
+        background: var(--ih-surface);
+      }
+      .app-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 10px 16px;
+        background: var(--ih-primary);
+        color: #fff;
+        font-weight: 600;
+      }
+      .app-header .brand { font-size: 14px; }
+      #capture-button {
+        padding: 6px 10px;
+        font: inherit;
+        font-weight: 600;
+        color: var(--ih-primary);
+        background: #fff;
+        border: none;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      #capture-button:hover { filter: brightness(0.96); }
+      .content { padding: 12px 16px; }
+      .capture-status {
+        display: block;
+        min-height: 16px;
+        margin-bottom: 8px;
+        color: var(--ih-muted);
+        font-size: 12px;
+      }
+      #session-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .session-section,
+      .role-section {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+      .field-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 2px 0;
+      }
+      .field-label { font-weight: 600; color: #3a3a3a; }
+      .field-value { text-align: right; }
+      .not-available { color: var(--ih-muted); font-style: italic; }
+      .expiration-expired .field-value { color: var(--ih-error); font-weight: 600; }
+      .expiration-active .field-value { color: var(--ih-success); }
+      .expiration-unavailable .field-value { color: var(--ih-muted); font-style: italic; }
+      .features-heading {
+        margin: 10px 0 2px;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--ih-muted);
+      }
+      .feature-list { margin: 0; padding-left: 18px; }
+      .feature-item { padding: 1px 0; }
+      .message {
+        margin: 0;
+        padding: 8px 10px;
+        border-radius: 4px;
+      }
+      .message-no-session { background: var(--ih-border); color: #555; }
+      .message-error { background: #fdecea; color: #a93226; }
+      .message-reauth { background: #fef5e7; color: #b9770e; }
+      .history-section { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+      .history-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .history-item { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border: 1px solid var(--ih-border); border-radius: 4px; }
+      .history-link { color: var(--ih-primary-2); text-decoration: none; font-weight: 600; word-break: break-all; }
+      .history-link:hover { text-decoration: underline; }
+      .history-meta { color: var(--ih-muted); font-size: 11px; }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <span class="brand">iPaaS Helper</span>
+      <button id="capture-button" type="button">Capturar sessão</button>
+    </header>
+    <div class="content">
+      <span id="capture-status" class="capture-status"></span>
+      <div id="session-panel"></div>
+    </div>
+    <script type="module" src="/src/popup.ts"></script>
+  </body>
+</html>
