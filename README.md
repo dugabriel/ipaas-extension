@@ -18,6 +18,18 @@ execução com destaque do caminho no canvas.
   (amarelo = processando, verde = concluído, vermelho = erro), com animação de
   acender suave. Steps de condição são marcados no rastro.
 
+## Instalar a partir de um Release (sem build)
+
+Cada versão publicada tem um `.zip` pronto na aba
+[Releases](https://github.com/dugabriel/ipaas-extension/releases) do repositório
+(gerado automaticamente pelo GitHub Actions).
+
+1. Baixe o `ipaas-helper-vX.Y.Z.zip` do Release mais recente e extraia.
+2. Abra `chrome://extensions` e ative o **Modo do desenvolvedor**.
+3. Clique em **Carregar sem compactação** e selecione a pasta extraída.
+
+Se preferir buildar você mesmo, siga as seções abaixo.
+
 ## Pré-requisitos
 
 - Node.js 18+ e npm.
@@ -36,6 +48,7 @@ O build gera a pasta `dist/`, que é a extensão pronta para carregar. Rode
 Scripts úteis:
 
 - `npm run build` — gera a `dist/`.
+- `npm run package` — gera a `dist/` e empacota em `ipaas-helper.zip`.
 - `npm run dev` — build em modo de desenvolvimento (watch) do Vite.
 - `npm test` — roda a suíte de testes (vitest).
 
