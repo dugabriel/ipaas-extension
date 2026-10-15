@@ -241,12 +241,19 @@ export class ApiClient {
     if (response.status === 401) {
       return { ok: false, kind: "unauthorized" };
     }
-    // Req 18.3 — any other non-200 → http_error with the returned status.
-    if (response.status !== 200) {
+    // Any non-2xx → http_error with the returned status (Req 18.3). The full
+    // 2xx range counts as success: execution webhooks commonly reply 202
+    // Accepted or 204 No Content (the real execution still runs — visible in
+    // the monitor), so only accepting 200 would wrongly report "could not be
+    // triggered".
+    if (response.status < 200 || response.status >= 300) {
       return { ok: false, kind: "http_error", status: response.status };
     }
 
-    const data = (await response.json()) as T;
+    // Tolerate an empty body (e.g. 204 No Content, or any 2xx with no payload):
+    // parsing it as JSON would throw. Return an empty object as the data so
+    // callers that read optional fields (e.g. messageId) simply see none.
+    const data = (await readJsonBody(response)) as T;
     return { ok: true, data };
   }
 }
@@ -254,6 +261,28 @@ export class ApiClient {
 // ---------------------------------------------------------------------------
 // Response shaping helpers.
 // ---------------------------------------------------------------------------
+
+/**
+ * Reads a response body as JSON, tolerating an empty body (204 No Content or
+ * any 2xx with no payload). Returns `{}` when the body is empty or not valid
+ * JSON so success handling never throws on an empty execution response.
+ */
+async function readJsonBody(response: Response): Promise<unknown> {
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    return {};
+  }
+  if (text.trim() === "") {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    return {};
+  }
+}
 
 /** Selects the first Integration from a list- or object-shaped response (Req 5.3). */
 function firstIntegration(data: unknown): Integration | null {

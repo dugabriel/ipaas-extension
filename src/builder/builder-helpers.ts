@@ -29,6 +29,8 @@ export interface FunctionOrigin {
   usage: FunctionUsage;
   /** Name of the function that consumes this one, when usage==="function". */
   usedBy: string | null;
+  /** True when the consuming activity lives inside a splitter sub-flow. */
+  inSplitter: boolean;
 }
 
 // Req 7 — one summary per CONDITION activity.
@@ -42,6 +44,8 @@ export interface ConditionSummary {
   targetId: string | null;
   /** True when this is the "else"/OTHERWISE branch of the conditions. */
   isElse: boolean;
+  /** True when this condition lives inside a splitter sub-flow. */
+  inSplitter: boolean;
 }
 
 export interface ConditionClause {
@@ -69,7 +73,11 @@ const PUBLISHED = "PUBLISHED";
  */
 export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
   const functions = flow?.functions ?? {};
-  const activities = flow?.activities ?? {};
+  // Flatten root activities AND every splitter sub-flow's activities, so a
+  // function consumed inside a subflow (e.g. a Diagram Caller referencing
+  // `{{{function.<id>.division}}}`) is correctly found instead of being
+  // reported as unused.
+  const { map: activities, inSubflow } = flattenActivities(flow?.activities);
 
   const entries = Object.entries(functions).map(([key, fn]) => {
     const functionId = fn?.id ?? key;
@@ -85,6 +93,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
         activityId: match.activityId,
         usage: "node" as const,
         usedBy: null,
+        inSplitter: inSubflow.has(match.activityId),
       };
     }
 
@@ -99,6 +108,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
         activityId: null,
         usage: "function" as const,
         usedBy: consumerFn,
+        inSplitter: false,
       };
     }
 
@@ -110,6 +120,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
       activityId: null,
       usage: "unused" as const,
       usedBy: null,
+      inSplitter: false,
     };
   });
 
@@ -130,11 +141,11 @@ function findConsumingFunction(
   functions: Record<string, FlowFunction>,
   functionId: string,
 ): string | null {
-  const needle = `function.${functionId}.output`;
+  const needles = [`function.${functionId}.`, `function.${functionId}}`];
   for (const [key, fn] of Object.entries(functions)) {
     if ((fn?.id ?? key) === functionId) continue;
     const haystack = JSON.stringify((fn as { params?: unknown })?.params ?? {});
-    if (haystack.includes(needle)) {
+    if (needles.some((n) => haystack.includes(n))) {
       return fn?.name ?? key;
     }
   }
@@ -149,7 +160,9 @@ function findConsumingFunction(
  * as having no defined clauses (Req 7.4).
  */
 export function summarizeConditions(flow: Flow): ConditionSummary[] {
-  const activities = flow?.activities ?? {};
+  // Include conditions/otherwise that live inside splitter sub-flows, not only
+  // the root canvas.
+  const { map: activities, inSubflow } = flattenActivities(flow?.activities);
   const summaries: ConditionSummary[] = [];
 
   for (const [activityId, activity] of Object.entries(activities)) {
@@ -217,6 +230,7 @@ export function summarizeConditions(flow: Flow): ConditionSummary[] {
       hasClauses: clauses.length > 0,
       targetId,
       isElse,
+      inSplitter: inSubflow.has(activityId),
     });
   }
 
@@ -360,19 +374,66 @@ export function shouldShowExecuteButton(integration: Integration): boolean {
  * `{{{<functionId>}}}` / `{{{<functionId>.…}}}`. Returns the activity plus its
  * map key (the canvas node's DOM id). Undefined when no activity references it.
  */
+/**
+ * Collects every activity reachable in the flow into a single map keyed by the
+ * activity id: the root `flow.activities` plus, recursively, each splitter's
+ * `configurations.subFlow.activities`. Lets the function-origin and condition
+ * resolvers see nodes nested inside subflows. Root entries take precedence on
+ * an id collision (first writer wins).
+ */
+function flattenActivities(root: Record<string, FlowActivity> | undefined): {
+  map: Record<string, FlowActivity>;
+  /** ids of activities that live inside a splitter sub-flow (not the root). */
+  inSubflow: Set<string>;
+} {
+  // Prototype-free map so activity ids that collide with Object.prototype
+  // members (e.g. "toString") are not falsely seen as already present.
+  const map: Record<string, FlowActivity> = Object.create(null);
+  const inSubflow = new Set<string>();
+  const visit = (
+    activities: Record<string, FlowActivity> | undefined,
+    nested: boolean,
+  ): void => {
+    for (const [id, activity] of Object.entries(activities ?? {})) {
+      if (!Object.prototype.hasOwnProperty.call(map, id)) {
+        map[id] = activity;
+        if (nested) inSubflow.add(id);
+      }
+      const sub = (activity as unknown as {
+        configurations?: { subFlow?: { activities?: Record<string, FlowActivity> } };
+      }).configurations?.subFlow?.activities;
+      if (sub) {
+        visit(sub, true);
+      }
+    }
+  };
+  visit(root, false);
+  return { map, inSubflow };
+}
+
 function findConsumingActivity(
   activities: Record<string, FlowActivity>,
   functionId: string,
 ): { activityId: string; activity: FlowActivity } | undefined {
+  // A reference can be `{{{function.<id>.<anyProp>}}}` (e.g. `.output`,
+  // `.division`, `.result.x`) or the bare `{{{<id>}}}` / `{{{<id>.…}}}`, so
+  // match the function id prefix rather than a fixed `.output` suffix.
   const needles = [
-    `function.${functionId}.output`,
+    `function.${functionId}.`,
+    `function.${functionId}}`,
     `{{{${functionId}}}}`,
     `{{{${functionId}.`,
   ];
   for (const [activityId, activity] of Object.entries(activities)) {
-    const haystack = JSON.stringify(
-      (activity as { configurations?: unknown })?.configurations ?? {},
-    );
+    // Serialize only the activity's OWN configuration, excluding a nested
+    // `subFlow` — otherwise a splitter would match a reference that actually
+    // belongs to one of its child activities (which we also index separately).
+    const config = {
+      ...((activity as { configurations?: Record<string, unknown> })
+        ?.configurations ?? {}),
+    };
+    delete (config as Record<string, unknown>).subFlow;
+    const haystack = JSON.stringify(config);
     if (needles.some((n) => haystack.includes(n))) {
       return { activityId, activity };
     }
@@ -423,6 +484,15 @@ function firstNonEmpty(...candidates: Array<string | undefined>): string | null 
 // DOM rendering (kept separate from the pure resolvers)
 // ---------------------------------------------------------------------------
 
+/** A small "splitter" badge marking an item that lives inside a splitter sub-flow. */
+function makeSplitterTag(): HTMLElement {
+  const tag = document.createElement("span");
+  tag.className = "ipaas-helper-splitter-tag";
+  tag.textContent = "splitter";
+  tag.title = "Está dentro de um splitter (sub-fluxo)";
+  return tag;
+}
+
 /**
  * Renders the resolved Origin_App alongside each function (Req 6.2, 6.4),
  * showing a not-available indicator when the origin is null (Req 6.3).
@@ -446,6 +516,9 @@ export function renderFunctionOrigins(
     const name = document.createElement("span");
     name.className = "ipaas-helper-function-name";
     name.textContent = origin.functionName || origin.functionId;
+    if (origin.inSplitter) {
+      name.appendChild(makeSplitterTag());
+    }
 
     const app = document.createElement("span");
     app.className = "ipaas-helper-function-app";
@@ -509,6 +582,9 @@ export function renderConditionSummaries(
       : summary.label
         ? `${summary.label} (${summary.conditionType})`
         : summary.conditionType;
+    if (summary.inSplitter) {
+      type.appendChild(makeSplitterTag());
+    }
     block.appendChild(type);
 
     if (summary.isElse) {

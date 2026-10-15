@@ -70,3 +70,63 @@ describe("summarizeConditions — else/OTHERWISE", () => {
     expect(normal?.clauses[0].expected).toBe("b");
   });
 });
+
+describe("subflow traversal (splitter sub-flow)", () => {
+  // Mirrors the real "gerenciador api" flow: function id11 is consumed by a
+  // Diagram Caller INSIDE the splitter sub-flow via {{{function.id11.division}}};
+  // id9 is unused. A CONDITION also lives inside the sub-flow.
+  const flow = {
+    start: "webhook-hook-trigger",
+    functions: {
+      id9: { id: "id9", name: "add date", type: "FUNCTION_DATE_TIME_ADD", label: "add date", params: {} },
+      id11: { id: "id11", name: "division", type: "FUNCTION_DIVISION", label: "division", params: {} },
+    },
+    activities: {
+      "id-splitter2": {
+        type: "SPLIT",
+        label: "split 10",
+        configurations: {
+          subFlow: {
+            start: "splitter-start2",
+            activities: {
+              "id-diagram-caller10": {
+                type: "DIAGRAM_CALLER",
+                name: "Diagram Caller",
+                label: "zap",
+                configurations: { body: "{{{function.id11.division}}}", name: "zap" },
+              },
+              "id-generator5#id-diagram-caller10": {
+                type: "CONDITION",
+                label: "1=1 eee",
+                configurations: {
+                  conditionType: "simple",
+                  conditions: [[{ input: "1", expected: "1", operation: "EQUALS", booleanOperator: "&&" }]],
+                },
+                connections: { next: ["id-diagram-caller10"] },
+              },
+            },
+          },
+        },
+      },
+    },
+  } as unknown as Flow;
+
+  it("classifies a function consumed inside a splitter sub-flow as 'node'", () => {
+    const origins = resolveFunctionOrigins(flow);
+    const byId = Object.fromEntries(origins.map((e) => [e.functionId, e]));
+    expect(byId.id11.usage).toBe("node");
+    expect(byId.id11.activityId).toBe("id-diagram-caller10");
+    expect(byId.id11.inSplitter).toBe(true);
+    expect(byId.id9.usage).toBe("unused");
+    expect(byId.id9.inSplitter).toBe(false);
+  });
+
+  it("summarizes a CONDITION that lives inside a splitter sub-flow", () => {
+    const summaries = summarizeConditions(flow);
+    const cond = summaries.find((c) => c.activityId === "id-generator5#id-diagram-caller10");
+    expect(cond).toBeDefined();
+    expect(cond?.clauses[0]?.expected).toBe("1");
+    expect(cond?.targetId).toBe("id-diagram-caller10");
+    expect(cond?.inSplitter).toBe(true);
+  });
+});

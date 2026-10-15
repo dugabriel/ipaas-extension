@@ -72,10 +72,13 @@ export type ExecutionOutcome =
 /** User-visible branch messages, kept in one place for reuse by the UI. */
 export const EXECUTION_MESSAGES = {
   no_tracking_id:
-    "The execution was triggered, but no tracking id is available.",
+    "Execução disparada com sucesso. Não há rastreamento porque o webhook " +
+    "está configurado para descartar o retorno (sem Message_Id). Para " +
+    "acompanhar os steps aqui, desative a opção de descartar o retorno no " +
+    "webhook.",
   unauthorized:
-    "Your session is unauthorized or expired. Please re-authenticate.",
-  trigger_failed: "The execution could not be triggered.",
+    "Sua sessão expirou ou não está autorizada. Capture a sessão novamente.",
+  trigger_failed: "Não foi possível disparar a execução.",
 } as const;
 
 /**
