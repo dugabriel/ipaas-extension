@@ -9,6 +9,16 @@ import type { Flow, FlowActivity, FlowFunction, Integration } from "../models";
 // Req 6 — one origin indicator per Flow_Function.
 export type FunctionUsage = "node" | "function" | "unused";
 
+/**
+ * Which sub-flow an activity was flattened from:
+ *  - "none":         a root (main canvas) activity;
+ *  - "splitter":     inside a splitter's `configurations.subFlow`;
+ *  - "global-error": inside the top-level `flow.globalErrorFlow`.
+ * The origin stays distinct so the UI can both know an item is in a sub-flow
+ * and show the correct, differentiated tag.
+ */
+export type SubflowOrigin = "none" | "splitter" | "global-error";
+
 export interface FunctionOrigin {
   functionId: string;
   functionName: string;
@@ -31,6 +41,10 @@ export interface FunctionOrigin {
   usedBy: string | null;
   /** True when the consuming activity lives inside a splitter sub-flow. */
   inSplitter: boolean;
+  /** True when the consuming activity lives inside the global-error sub-flow. */
+  inGlobalError: boolean;
+  /** Which sub-flow the consuming activity came from (none / splitter / global-error). */
+  subflowOrigin: SubflowOrigin;
 }
 
 // Req 7 — one summary per CONDITION activity.
@@ -46,6 +60,10 @@ export interface ConditionSummary {
   isElse: boolean;
   /** True when this condition lives inside a splitter sub-flow. */
   inSplitter: boolean;
+  /** True when this condition lives inside the global-error sub-flow. */
+  inGlobalError: boolean;
+  /** Which sub-flow this condition came from (none / splitter / global-error). */
+  subflowOrigin: SubflowOrigin;
 }
 
 export interface ConditionClause {
@@ -73,11 +91,12 @@ const PUBLISHED = "PUBLISHED";
  */
 export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
   const functions = flow?.functions ?? {};
-  // Flatten root activities AND every splitter sub-flow's activities, so a
-  // function consumed inside a subflow (e.g. a Diagram Caller referencing
-  // `{{{function.<id>.division}}}`) is correctly found instead of being
-  // reported as unused.
-  const { map: activities, inSubflow } = flattenActivities(flow?.activities);
+  // Flatten root activities AND every sub-flow's activities (splitter sub-flows
+  // plus the top-level global-error sub-flow), so a function consumed inside a
+  // sub-flow (e.g. a Diagram Caller referencing `{{{function.<id>.division}}}`,
+  // or a global-error Generator referencing `{{{function.<id>.date}}}`) is
+  // correctly found instead of being reported as unused.
+  const { map: activities, subflowOrigin } = flattenActivities(flow);
 
   const entries = Object.entries(functions).map(([key, fn]) => {
     const functionId = fn?.id ?? key;
@@ -86,6 +105,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
     // Category 1: consumed by an ACTIVITY (has a canvas node + origin app).
     const match = findConsumingActivity(activities, functionId);
     if (match) {
+      const origin = subflowOrigin.get(match.activityId) ?? "none";
       return {
         functionId,
         functionName,
@@ -93,7 +113,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
         activityId: match.activityId,
         usage: "node" as const,
         usedBy: null,
-        inSplitter: inSubflow.has(match.activityId),
+        ...subflowOriginFields(origin),
       };
     }
 
@@ -108,7 +128,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
         activityId: null,
         usage: "function" as const,
         usedBy: consumerFn,
-        inSplitter: false,
+        ...subflowOriginFields("none"),
       };
     }
 
@@ -120,7 +140,7 @@ export function resolveFunctionOrigins(flow: Flow): FunctionOrigin[] {
       activityId: null,
       usage: "unused" as const,
       usedBy: null,
-      inSplitter: false,
+      ...subflowOriginFields("none"),
     };
   });
 
@@ -160,9 +180,9 @@ function findConsumingFunction(
  * as having no defined clauses (Req 7.4).
  */
 export function summarizeConditions(flow: Flow): ConditionSummary[] {
-  // Include conditions/otherwise that live inside splitter sub-flows, not only
-  // the root canvas.
-  const { map: activities, inSubflow } = flattenActivities(flow?.activities);
+  // Include conditions/otherwise that live inside sub-flows (splitter sub-flows
+  // and the top-level global-error sub-flow), not only the root canvas.
+  const { map: activities, subflowOrigin } = flattenActivities(flow);
   const summaries: ConditionSummary[] = [];
 
   for (const [activityId, activity] of Object.entries(activities)) {
@@ -230,7 +250,7 @@ export function summarizeConditions(flow: Flow): ConditionSummary[] {
       hasClauses: clauses.length > 0,
       targetId,
       isElse,
-      inSplitter: inSubflow.has(activityId),
+      ...subflowOriginFields(subflowOrigin.get(activityId) ?? "none"),
     });
   }
 
@@ -376,39 +396,72 @@ export function shouldShowExecuteButton(integration: Integration): boolean {
  */
 /**
  * Collects every activity reachable in the flow into a single map keyed by the
- * activity id: the root `flow.activities` plus, recursively, each splitter's
- * `configurations.subFlow.activities`. Lets the function-origin and condition
- * resolvers see nodes nested inside subflows. Root entries take precedence on
- * an id collision (first writer wins).
+ * activity id, recording WHICH sub-flow each one came from:
+ *  - the root `flow.activities` (origin "none"), plus, recursively, each
+ *    splitter's `configurations.subFlow.activities` (origin "splitter");
+ *  - the top-level `flow.globalErrorFlow.activities` (origin "global-error"),
+ *    a sibling block not reachable from within an activity, plus any splitter
+ *    nested inside it (which keeps origin "global-error").
+ * Lets the function-origin and condition resolvers see nodes nested inside
+ * sub-flows. Root entries take precedence on an id collision (first writer
+ * wins); `subflowOrigin.get(id)` is absent for root activities.
  */
-function flattenActivities(root: Record<string, FlowActivity> | undefined): {
+/**
+ * Derives the three origin fields shared by FunctionOrigin and ConditionSummary
+ * from a single SubflowOrigin, so callers stay in sync. `inSplitter` keeps its
+ * existing semantics (true only for splitter items); `inGlobalError` is its
+ * distinct global-error counterpart.
+ */
+function subflowOriginFields(origin: SubflowOrigin): {
+  inSplitter: boolean;
+  inGlobalError: boolean;
+  subflowOrigin: SubflowOrigin;
+} {
+  return {
+    inSplitter: origin === "splitter",
+    inGlobalError: origin === "global-error",
+    subflowOrigin: origin,
+  };
+}
+
+function flattenActivities(flow: Flow | undefined): {
   map: Record<string, FlowActivity>;
-  /** ids of activities that live inside a splitter sub-flow (not the root). */
+  /** ids of activities that live inside ANY sub-flow (not the root). */
   inSubflow: Set<string>;
+  /** id -> the sub-flow it came from, only for nested (non-root) activities. */
+  subflowOrigin: Map<string, SubflowOrigin>;
 } {
   // Prototype-free map so activity ids that collide with Object.prototype
   // members (e.g. "toString") are not falsely seen as already present.
   const map: Record<string, FlowActivity> = Object.create(null);
   const inSubflow = new Set<string>();
+  const subflowOrigin = new Map<string, SubflowOrigin>();
   const visit = (
     activities: Record<string, FlowActivity> | undefined,
-    nested: boolean,
+    origin: SubflowOrigin,
   ): void => {
     for (const [id, activity] of Object.entries(activities ?? {})) {
       if (!Object.prototype.hasOwnProperty.call(map, id)) {
         map[id] = activity;
-        if (nested) inSubflow.add(id);
+        if (origin !== "none") {
+          inSubflow.add(id);
+          subflowOrigin.set(id, origin);
+        }
       }
       const sub = (activity as unknown as {
         configurations?: { subFlow?: { activities?: Record<string, FlowActivity> } };
       }).configurations?.subFlow?.activities;
       if (sub) {
-        visit(sub, true);
+        // A splitter nested inside the global-error sub-flow keeps the
+        // global-error origin; a top-level splitter is "splitter".
+        visit(sub, origin === "none" ? "splitter" : origin);
       }
     }
   };
-  visit(root, false);
-  return { map, inSubflow };
+  visit(flow?.activities, "none");
+  // The global-error sub-flow is a sibling of `activities`, so flatten it here.
+  visit(flow?.globalErrorFlow?.activities, "global-error");
+  return { map, inSubflow, subflowOrigin };
 }
 
 function findConsumingActivity(
@@ -494,6 +547,31 @@ function makeSplitterTag(): HTMLElement {
 }
 
 /**
+ * A small "global error" badge marking an item that lives inside the
+ * global-error sub-flow. Distinct from the splitter tag so the origin stays
+ * visible and differentiated in the UI.
+ */
+function makeGlobalErrorTag(): HTMLElement {
+  const tag = document.createElement("span");
+  tag.className = "ipaas-helper-global-error-tag";
+  tag.textContent = "global error";
+  tag.title = "Está dentro do global error (sub-fluxo)";
+  return tag;
+}
+
+/**
+ * Appends the correct sub-flow origin badge (splitter / global error) to
+ * `target`, or nothing for root items. Keeps both origins visible and distinct.
+ */
+function appendSubflowTag(target: HTMLElement, origin: SubflowOrigin): void {
+  if (origin === "splitter") {
+    target.appendChild(makeSplitterTag());
+  } else if (origin === "global-error") {
+    target.appendChild(makeGlobalErrorTag());
+  }
+}
+
+/**
  * Renders the resolved Origin_App alongside each function (Req 6.2, 6.4),
  * showing a not-available indicator when the origin is null (Req 6.3).
  */
@@ -516,9 +594,7 @@ export function renderFunctionOrigins(
     const name = document.createElement("span");
     name.className = "ipaas-helper-function-name";
     name.textContent = origin.functionName || origin.functionId;
-    if (origin.inSplitter) {
-      name.appendChild(makeSplitterTag());
-    }
+    appendSubflowTag(name, origin.subflowOrigin);
 
     const app = document.createElement("span");
     app.className = "ipaas-helper-function-app";
@@ -582,9 +658,7 @@ export function renderConditionSummaries(
       : summary.label
         ? `${summary.label} (${summary.conditionType})`
         : summary.conditionType;
-    if (summary.inSplitter) {
-      type.appendChild(makeSplitterTag());
-    }
+    appendSubflowTag(type, summary.subflowOrigin);
     block.appendChild(type);
 
     if (summary.isElse) {

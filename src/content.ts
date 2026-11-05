@@ -1280,11 +1280,13 @@ function ensureStyles(): void {
 #${CONTAINER_ID} .ipaas-helper-function-origins { list-style: none; margin: 0; padding: 0; }
 #${CONTAINER_ID} .ipaas-helper-function-origin { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; }
 #${CONTAINER_ID} .ipaas-helper-function-name { font-weight: 600; color: #1a1a1a; }
-#${CONTAINER_ID} .ipaas-helper-splitter-tag {
+#${CONTAINER_ID} .ipaas-helper-splitter-tag,
+#${CONTAINER_ID} .ipaas-helper-global-error-tag {
   display: inline-block; margin-left: 6px; vertical-align: middle;
   font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em;
   padding: 1px 6px; border-radius: 999px; background: #e3d9f3; color: #5e35b1;
 }
+#${CONTAINER_ID} .ipaas-helper-global-error-tag { background: #fbe0db; color: #c62828; }
 #${CONTAINER_ID} .ipaas-helper-function-app { font-size: 12px; color: var(--ih-primary); }
 #${CONTAINER_ID} .ipaas-helper-function-origin.ipaas-helper-unused { opacity: 0.6; }
 #${CONTAINER_ID} .ipaas-helper-function-origin.ipaas-helper-unused .ipaas-helper-function-app { color: var(--ih-muted); font-style: italic; }

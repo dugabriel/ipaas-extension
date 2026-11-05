@@ -128,5 +128,84 @@ describe("subflow traversal (splitter sub-flow)", () => {
     expect(cond?.clauses[0]?.expected).toBe("1");
     expect(cond?.targetId).toBe("id-diagram-caller10");
     expect(cond?.inSplitter).toBe(true);
+    expect(cond?.inGlobalError).toBe(false);
+    expect(cond?.subflowOrigin).toBe("splitter");
+  });
+});
+
+describe("subflow traversal (global-error sub-flow)", () => {
+  // Mirrors the real captured shape: the GLOBAL_ERROR marker in the main flow
+  // carries EMPTY configurations, and the actual sub-flow lives at the TOP
+  // LEVEL in flow.globalErrorFlow. A Generator inside it references
+  // {{{function.id15.date}}} (resolving against the MAIN flow.functions), and a
+  // CONDITION also lives inside the sub-flow. Functions/conditions nested there
+  // must be flattened and surfaced exactly like splitter items, but tagged with
+  // a DISTINCT origin.
+  const flow = {
+    async: false,
+    start: "trigger3",
+    functions: {
+      id15: { id: "id15", name: "format date", type: "FUNCTION_DATE_TIME", label: "format date", params: {} },
+      id99: { id: "id99", name: "unused fn", type: "FUNCTION_JOLT", label: "unused fn", params: {} },
+    },
+    activities: {
+      trigger3: { type: "WEBHOOK", label: "Webhook" },
+      "id-global-error": {
+        // Marker activity in the MAIN flow: empty configurations, no sub-flow.
+        type: "GLOBAL_ERROR",
+        label: "Global error",
+        configurations: {},
+      },
+    },
+    globalErrorFlow: {
+      start: "global-error-start",
+      activities: {
+        "global-error-start": { id: "global-error-start", type: "GLOBAL_ERROR_START", label: "Global Error Start" },
+        "id-generator14": {
+          id: "id-generator14",
+          type: "GENERATOR",
+          name: "Dados Erro",
+          label: "Dados Erro",
+          configurations: { name: "Dados Erro", fileContent: "{{{function.id15.date}}}" },
+        },
+        "global-error-start#id-cond": {
+          id: "global-error-start#id-cond",
+          type: "CONDITION",
+          label: "Erro Fatal",
+          connections: { next: ["id16"] },
+          configurations: {
+            conditionType: "simple",
+            conditions: [[{ input: "{{{global-error-start.code}}}", expected: "500", operation: "EQUALS", booleanOperator: "&&" }]],
+          },
+        },
+      },
+    },
+  } as unknown as Flow;
+
+  it("classifies a function consumed inside the global-error sub-flow as 'node' with a distinct origin", () => {
+    const origins = resolveFunctionOrigins(flow);
+    const byId = Object.fromEntries(origins.map((e) => [e.functionId, e]));
+
+    expect(byId.id15.usage).toBe("node");
+    expect(byId.id15.activityId).toBe("id-generator14");
+    // Surfaced like a sub-flow item, but tagged distinctly from a splitter.
+    expect(byId.id15.inGlobalError).toBe(true);
+    expect(byId.id15.inSplitter).toBe(false);
+    expect(byId.id15.subflowOrigin).toBe("global-error");
+
+    expect(byId.id99.usage).toBe("unused");
+    expect(byId.id99.inGlobalError).toBe(false);
+    expect(byId.id99.subflowOrigin).toBe("none");
+  });
+
+  it("summarizes a CONDITION that lives inside the global-error sub-flow with a distinct origin", () => {
+    const summaries = summarizeConditions(flow);
+    const cond = summaries.find((c) => c.activityId === "global-error-start#id-cond");
+    expect(cond).toBeDefined();
+    expect(cond?.clauses[0]?.expected).toBe("500");
+    expect(cond?.targetId).toBe("id16");
+    expect(cond?.inGlobalError).toBe(true);
+    expect(cond?.inSplitter).toBe(false);
+    expect(cond?.subflowOrigin).toBe("global-error");
   });
 });

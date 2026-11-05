@@ -50,7 +50,15 @@ export interface Flow {
   functions: Record<string, FlowFunction>;
   activities: Record<string, FlowActivity>;
   start: string; // id into activities (Req 8.1)
-  globalErrorFlow?: unknown;
+  // The "Global Error" component is a sibling sub-flow: a top-level block (not
+  // reachable from within an activity) whose internal activities — conditions,
+  // functions, nodes — run on error. Its functions resolve against the MAIN
+  // `flow.functions` block (it has no `functions` key of its own).
+  globalErrorFlow?: GlobalErrorFlow;
+}
+export interface GlobalErrorFlow {
+  start: string; // id into its own activities (the GLOBAL_ERROR_START node)
+  activities: Record<string, FlowActivity>;
 }
 export interface FlowFunction {
   id: string;
