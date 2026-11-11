@@ -1,6 +1,6 @@
 {
   "name": "ipaas-helper-extension",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Chrome MV3 helper extension for the TOTVS iPaaS web application",
   "type": "module",
   "private": true,
